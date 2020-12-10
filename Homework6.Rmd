@@ -11,6 +11,8 @@ library(p8105.datasets)
 library(hexbin)
 library(httr)
 library(rvest)
+library(modelr)
+library(mgcv)
 library(ggridges)
 library(patchwork)
 knitr::opts_chunk$set(
@@ -128,23 +130,32 @@ Fit a model
 
 ```{r}
 
-#make scatterplot
+#Hypothesized Linear Model
 
-test = baby.df %>% 
-  select(bwt,blength,bhead,gaweeks,smoken)
-
-round(cor(test),3)
-
-pairs(test)
+# For this model I decided to include the baby length as predictor of birth weight because in studies it is shown that length and weight are positively correlated. I decided to include baby head circumference as a predictor because I hypothesize that a greater head circumference will yield a greater weight. I included gestational age in my analysis due to previous research and knowledge. Finally, I decided to include the smoke variable because I suspect an inverse relationship between the two variables. Based on prior knowledge and research, smoking status has been shown to have an effect on child birth weight. 
 
 hypo.df = lm(bwt~ blength + bhead + gaweeks + smoken, data = baby.df)
 summary(hypo.df)
 
-modelr::add_predictions(baby.df, hypo.df)
-modelr::add_residuals(baby.df, hypo.df)
+plot.hypo = baby.df %>% 
+  select(bwt,blength,bhead,gaweeks,smoken)
+
+round(cor(plot.hypo),3)
+pairs(plot.hypo)
+
+baby.df %>% 
+  modelr::add_residuals(hypo.df) %>% 
+  modelr::add_predictions(hypo.df) %>% 
+  select(resid,pred, everything()) %>% 
+  ggplot(aes(x = pred, y = resid)) + 
+  geom_point()
+
+# Model 2
 
 model.2 = lm(bwt ~ gaweeks + blength , data = baby.df)
 summary(model.2)
+
+# Model 3
 
 model.3 = lm(bwt~blength + bhead + babysex + blength*bhead + blength*babysex + bhead*babysex + blength*bhead*babysex , data = baby.df)
 summary(model.3)
@@ -152,25 +163,43 @@ summary(model.3)
 
 
 
-baby.df %>% 
-  modelr::add_residuals(model.2) %>% 
-  select(resid, everything())
-
-baby.df %>% 
-  modelr::add_predictions(model.2) %>% 
-  select(pred, everything())
-
-summary(model.3)
-
-
-baby.df %>% 
-  modelr::add_residuals(model.3) %>% 
-  select(resid, everything())
-
-baby.df %>% 
-  modelr::add_predictions(model.3) %>% 
-  select(pred, everything())
 ```
+
+
+```{r}
+
+cv.df =
+  crossv_mc(baby.df, 100) %>% 
+  mutate(
+    train = map(train, as_tibble),
+    test = map(test, as_tibble)) 
+
+cv_df = 
+  cv.df %>% 
+  mutate(
+   hypo.df.fit = map(.x = train, ~ lm(bwt ~ blength + bhead + gaweeks + smoken, data = .x)),
+   model.2.fit = map(.x = train, ~ lm(bwt ~ gaweeks + blength , data = .x)),
+   model.3.fit = map(.x = train, ~ lm(bwt ~ blength + bhead + babysex + blength*bhead + blength*babysex + bhead*babysex + blength*bhead*babysex , data = .x))) %>% 
+  mutate(
+    rmse_hypo = map2_dbl( hypo.df.fit, test, ~rmse(model = .x, data = .y)),
+    rmse_mod1   = map2_dbl(model.2.fit, test, ~rmse(model = .x, data = .y)),
+    rmse_mod2 = map2_dbl(model.3.fit, test, ~rmse(model = .x, data = .y)))
+
+cv_df %>% 
+  select(starts_with("rmse")) %>% 
+  pivot_longer(
+    everything(),
+    names_to = "model", 
+    values_to = "rmse",
+    names_prefix = "rmse_") %>% 
+  mutate(model = fct_inorder(model)) %>% 
+  ggplot(aes(x = model, y = rmse)) + geom_violin()
+
+# Among the 3 models used to predict birth weight, my hypothesized model fits it the best
+
+
+```
+
 
 
 # Problem 3
